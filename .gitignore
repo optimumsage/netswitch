@@ -1,0 +1,22 @@
+# Rust
+/target
+Cargo.lock
+
+# Node / Frontend
+/netswitch-gui/node_modules
+/netswitch-gui/dist
+/netswitch-gui/src-tauri/target
+/netswitch-gui/src-tauri/Cargo.lock
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDEs
+.vscode/
+.idea/
+
+# Environment
+.env
+*.log
+readme-me.md

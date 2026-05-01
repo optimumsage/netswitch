@@ -1,0 +1,28 @@
+[package]
+name = "netswitch-daemon"
+version = "0.1.0"
+license = "PolyForm-Noncommercial-1.0.0"
+edition = "2021"
+
+[[bin]]
+name = "netswitch-daemon"
+path = "src/main.rs"
+
+[[bin]]
+name = "check-ifaces"
+path = "src/check_ifaces.rs"
+
+[[bin]]
+name = "check-ipc"
+path = "src/check_ipc.rs"
+
+[dependencies]
+reqwest = { version = "0.13", features = ["json"] }
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+anyhow = "1.0.102"
+socket2 = "0.6.3"
+default-net = "0.22.0"
+axum = "0.8.9"
+futures = "0.3.32"

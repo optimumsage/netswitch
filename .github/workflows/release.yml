@@ -1,0 +1,71 @@
+name: "Release"
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build-and-release:
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [macos-latest, ubuntu-22.04, windows-latest]
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: setup node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: install dependencies (ubuntu only)
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - name: install frontend dependencies
+        run: cd netswitch-gui && npm install
+
+      - name: build daemon
+        run: cargo build --release --manifest-path netswitch-daemon/Cargo.toml
+
+      - name: prepare tauri resources (unix)
+        if: matrix.platform != 'windows-latest'
+        run: |
+          mkdir -p netswitch-gui/src-tauri/bin
+          mkdir -p netswitch-gui/src-tauri/service
+          cp target/release/netswitch-daemon netswitch-gui/src-tauri/bin/
+          cp service/* netswitch-gui/src-tauri/service/
+          cp scripts/setup-daemon.sh netswitch-gui/src-tauri/bin/
+
+      - name: prepare tauri resources (windows)
+        if: matrix.platform == 'windows-latest'
+        shell: pwsh
+        run: |
+          if (!(Test-Path "netswitch-gui/src-tauri/bin")) { New-Item -Path "netswitch-gui/src-tauri/bin" -ItemType Directory }
+          if (!(Test-Path "netswitch-gui/src-tauri/service")) { New-Item -Path "netswitch-gui/src-tauri/service" -ItemType Directory }
+          copy target\release\netswitch-daemon.exe netswitch-gui\src-tauri\bin\
+          copy service\* netswitch-gui\src-tauri\service\
+          copy scripts\setup-daemon.ps1 netswitch-gui\src-tauri\bin\
+
+      - name: build tauri app
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: v__VERSION__ # tauri-action replaces this with app version
+          releaseName: "Netswitch v__VERSION__"
+          releaseBody: "Automated release of Netswitch"
+          releaseDraft: true
+          prerelease: false
+          projectPath: netswitch-gui

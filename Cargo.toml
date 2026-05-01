@@ -1,0 +1,6 @@
+[workspace]
+members = [
+    "netswitch-daemon",
+    "netswitch-gui/src-tauri"
+]
+resolver = "2"
