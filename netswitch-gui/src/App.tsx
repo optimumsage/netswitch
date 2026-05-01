@@ -127,6 +127,17 @@ function App() {
     return () => clearInterval(interval);
   }, [fetchStatus]);
 
+  // Update Tray Status
+  useEffect(() => {
+    if (state) {
+      const active = state.interfaces.find(i => i.name === state.current_active);
+      invoke("update_tray_status", { 
+        activeInterface: state.current_active, 
+        friendlyName: active?.friendly_name || active?.name || null 
+      });
+    }
+  }, [state?.current_active, state?.interfaces]);
+
   const handleReorder = (newOrder: string[]) => {
     setLocalOrder(newOrder);
   };

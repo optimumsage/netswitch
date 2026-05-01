@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use tauri::{Manager, menu::{Menu, MenuItem, PredefinedMenuItem}, tray::{TrayIconBuilder, TrayIconEvent, MouseButton, MouseButtonState}};
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct DaemonState {
@@ -15,6 +16,8 @@ pub struct InterfaceInfo {
     pub has_internet: bool,
     pub is_primary: bool,
 }
+
+struct TrayStatusItem(MenuItem<tauri::Wry>);
 
 #[tauri::command]
 async fn get_daemon_status() -> Result<DaemonState, String> {
@@ -52,6 +55,29 @@ async fn set_interface_order(order: Vec<String>) -> Result<DaemonState, String> 
 }
 
 #[tauri::command]
+fn update_tray_status(
+    app: tauri::AppHandle, 
+    active_interface: Option<String>, 
+    friendly_name: Option<String>,
+    status_item: tauri::State<'_, TrayStatusItem>
+) {
+    let name = friendly_name.or(active_interface);
+    let title = match name {
+        Some(ref n) => format!("Netswitch: {}", n),
+        None => "Netswitch: Offline".to_string(),
+    };
+    
+    if let Some(tray) = app.tray_by_id("main") {
+        #[cfg(target_os = "macos")]
+        let _ = tray.set_title(Some(title.clone()));
+        
+        let _ = tray.set_tooltip(Some(title.clone()));
+    }
+
+    let _ = status_item.0.set_text(title);
+}
+
+#[tauri::command]
 async fn install_daemon_service(app: tauri::AppHandle) -> Result<(), String> {
     use std::process::Command;
     use tauri::Manager;
@@ -85,7 +111,6 @@ async fn install_daemon_service(app: tauri::AppHandle) -> Result<(), String> {
     {
         let script_path = resource_path.join("bin/setup-daemon.sh");
         
-        // On macOS/Linux, we use AppleScript or pkexec/sudo to prompt for password
         #[cfg(target_os = "macos")]
         {
             let osascript = format!(
@@ -104,7 +129,6 @@ async fn install_daemon_service(app: tauri::AppHandle) -> Result<(), String> {
 
         #[cfg(target_os = "linux")]
         {
-            // Try pkexec (GUI) then sudo
             let status = Command::new("pkexec")
                 .arg("bash")
                 .arg(script_path.to_str().unwrap())
@@ -130,10 +154,69 @@ async fn install_daemon_service(app: tauri::AppHandle) -> Result<(), String> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .setup(|app| {
+            let status_i = MenuItem::with_id(app, "status", "Netswitch: Offline", false, None::<&str>)?;
+            let quit_i = MenuItem::with_id(app, "quit", "Quit Netswitch", true, None::<&str>)?;
+            let show_i = MenuItem::with_id(app, "show", "Show Window", true, None::<&str>)?;
+            let sep = PredefinedMenuItem::separator(app)?;
+            let menu = Menu::with_items(app, &[&status_i, &sep, &show_i, &quit_i])?;
+
+            app.manage(TrayStatusItem(status_i.clone()));
+
+            let _tray = TrayIconBuilder::with_id("main")
+                .icon(app.default_window_icon().unwrap().clone())
+                .menu(&menu)
+                .show_menu_on_left_click(false)
+                .on_menu_event(|app, event| {
+                    match event.id.as_ref() {
+                        "quit" => {
+                            app.exit(0);
+                        }
+                        "show" => {
+                            let window = app.get_webview_window("main").unwrap();
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                            let _ = window.unminimize();
+                        }
+                        _ => {}
+                    }
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
+                        let app = tray.app_handle();
+                        if let Some(window) = app.get_webview_window("main") {
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                            let _ = window.unminimize();
+                        }
+                    }
+                })
+                .build(app)?;
+
+            Ok(())
+        })
+        .on_window_event(|window, event| match event {
+            tauri::WindowEvent::CloseRequested { api, .. } => {
+                window.hide().unwrap();
+                api.prevent_close();
+            }
+            tauri::WindowEvent::Resized(..) => {
+                if window.is_minimized().unwrap_or(false) {
+                    window.hide().unwrap();
+                }
+            }
+            _ => {}
+        })
         .invoke_handler(tauri::generate_handler![
             get_daemon_status, 
             set_interface_order,
-            install_daemon_service
+            install_daemon_service,
+            update_tray_status
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
