@@ -153,6 +153,7 @@ async fn install_daemon_service(app: tauri::AppHandle) -> Result<(), String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             let status_i = MenuItem::with_id(app, "status", "Netswitch: Offline", false, None::<&str>)?;
@@ -163,10 +164,17 @@ pub fn run() {
 
             app.manage(TrayStatusItem(status_i.clone()));
 
-            let _tray = TrayIconBuilder::with_id("main")
-                .icon(app.default_window_icon().unwrap().clone())
+            let tray_builder = TrayIconBuilder::with_id("main")
                 .menu(&menu)
-                .show_menu_on_left_click(false)
+                .show_menu_on_left_click(false);
+
+            let tray_builder = if let Some(icon) = app.default_window_icon() {
+                tray_builder.icon(icon.clone())
+            } else {
+                tray_builder
+            };
+
+            let _tray = tray_builder
                 .on_menu_event(|app, event| {
                     match event.id.as_ref() {
                         "quit" => {

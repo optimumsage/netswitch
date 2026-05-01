@@ -23,6 +23,14 @@
       "csp": null
     }
   },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/optimumsage/netswitch/releases/latest/download/latest.json"
+      ],
+      "pubkey": "RWThRH2AntlWhVZU3qOWybr5jy0VQNZCWq7LE2ytazgIKTOJB/CmnAqk"
+    }
+  },
   "bundle": {
     "active": true,
     "targets": "all",

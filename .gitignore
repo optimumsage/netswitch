@@ -21,3 +21,7 @@ local/
 .env
 *.log
 readme-me.md
+
+# Tauri Signing Keys
+*.key
+*.key.pub

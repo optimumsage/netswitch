@@ -464,6 +464,41 @@ h1 {
   letter-spacing: 0.05em;
 }
 
+.update-pill {
+  background: #10b981;
+  color: white;
+  border: none;
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 4px 10px;
+  border-radius: 20px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  margin-top: -4px;
+}
+
+.update-pill:hover {
+  background: #059669;
+  transform: translateY(-1px);
+}
+
+.update-pill.updating {
+  background: #94a3b8;
+  cursor: wait;
+}
+
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
 @media (prefers-color-scheme: dark) {
   :root {
     background-color: #0f172a;

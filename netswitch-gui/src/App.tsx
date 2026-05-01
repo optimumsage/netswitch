@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { check } from "@tauri-apps/plugin-updater";
 import { motion, AnimatePresence, Reorder } from "framer-motion";
 import { 
   Wifi, 
@@ -7,7 +8,9 @@ import {
   AlertCircle, 
   ChevronRight, 
   GripVertical,
-  Network
+  Network,
+  Download,
+  RefreshCw
 } from "lucide-react";
 import "./App.css";
 
@@ -32,6 +35,9 @@ function App() {
   const [isUpdatingOrder, setIsUpdatingOrder] = useState(false);
   const [isDaemonMissing, setIsDaemonMissing] = useState(false);
   const [isInstalling, setIsInstalling] = useState(false);
+  const [updateAvailable, setUpdateAvailable] = useState<any>(null);
+  const [isUpdatingApp, setIsUpdatingApp] = useState(false);
+  const [updateProgress, setUpdateProgress] = useState(0);
 
   const errorCount = useRef(0);
   const isDragging = useRef(false);
@@ -39,8 +45,46 @@ function App() {
   const targetPrimary = useRef<string | null>(null);
   const updateStartTime = useRef<number>(0);
 
+  const checkForUpdates = async () => {
+    try {
+      const update = await check();
+      if (update) {
+        setUpdateAvailable(update);
+      }
+    } catch (e) {
+      // Failed to check for updates
+    }
+  };
+
+  const handleUpdate = async () => {
+    if (!updateAvailable) return;
+    setIsUpdatingApp(true);
+    try {
+      let downloaded = 0;
+      let contentLength = 0;
+      
+      await updateAvailable.downloadAndInstall((event: any) => {
+        switch (event.event) {
+          case 'Started':
+            contentLength = event.data.contentLength || 0;
+            break;
+          case 'Progress':
+            downloaded += event.data.chunkLength;
+            if (contentLength > 0) {
+                setUpdateProgress(Math.round((downloaded / contentLength) * 100));
+            }
+            break;
+        }
+      });
+
+      await invoke("install_daemon_service");
+    } catch (e) {
+      setError(`Update failed: ${e}`);
+      setIsUpdatingApp(false);
+    }
+  };
+
   const fetchStatus = useCallback(async () => {
-    // Skip polling if the user is currently dragging an item
     if (isDragging.current) return;
 
     try {
@@ -52,20 +96,10 @@ function App() {
       
       if (isUpdatingOrder) {
           const timeElapsed = Date.now() - updateStartTime.current;
-          
           const isTargetActive = data.current_active === targetPrimary.current;
           const isOrderSynced = JSON.stringify(data.custom_order) === JSON.stringify(localOrder);
           
-          console.log("Sync Check:", {
-            target: targetPrimary.current,
-            current: data.current_active,
-            isTargetActive,
-            isOrderSynced,
-            timeElapsed
-          });
-
           if (isTargetActive || (isOrderSynced && timeElapsed > 3000) || timeElapsed > 15000) {
-              console.log("Sync Clearing Condition Met");
               setIsUpdatingOrder(false);
               targetPrimary.current = null;
           }
@@ -76,7 +110,6 @@ function App() {
               ? data.custom_order 
               : data.interfaces.map(i => i.name);
           
-          // Only update local order from backend if we aren't currently "Saving..."
           if (JSON.stringify(backendOrder) !== JSON.stringify(localOrder)) {
               setLocalOrder(backendOrder);
           }
@@ -94,17 +127,23 @@ function App() {
     setIsInstalling(true);
     try {
       await invoke("install_daemon_service");
-      // Wait a bit for service to start
       setTimeout(fetchStatus, 3000);
     } catch (e: any) {
-      console.error("Installation failed", e);
       setError(`Installation failed: ${e}`);
     } finally {
       setIsInstalling(false);
     }
   };
 
-  // Initial Load - Only once
+  useEffect(() => {
+    if (state && localOrder.length === 0 && !isDragging.current && !isUpdatingOrder) {
+        const backendOrder = state.custom_order.length > 0 
+            ? state.custom_order 
+            : state.interfaces.map(i => i.name);
+        setLocalOrder(backendOrder);
+    }
+  }, [state, localOrder.length]);
+
   useEffect(() => {
     const init = async () => {
       try {
@@ -115,26 +154,25 @@ function App() {
             : data.interfaces.map(i => i.name);
         setLocalOrder(initialOrder);
       } catch (e) {
-        console.error("Initial fetch failed", e);
+        // Initial fetch failed
       }
+      checkForUpdates();
     };
     init();
   }, []); 
 
-  // Polling Interval
   useEffect(() => {
     const interval = setInterval(fetchStatus, 1500); 
     return () => clearInterval(interval);
   }, [fetchStatus]);
 
-  // Update Tray Status
   useEffect(() => {
     if (state) {
       const active = state.interfaces.find(i => i.name === state.current_active);
       invoke("update_tray_status", { 
         activeInterface: state.current_active, 
         friendlyName: active?.friendly_name || active?.name || null 
-      });
+      }).catch(() => {});
     }
   }, [state?.current_active, state?.interfaces]);
 
@@ -144,8 +182,6 @@ function App() {
 
   const syncOrder = async () => {
     isDragging.current = false;
-    
-    // Check if order actually changed compared to backend
     if (state && JSON.stringify(state.custom_order) === JSON.stringify(localOrder)) {
       return;
     }
@@ -157,13 +193,11 @@ function App() {
     try {
       const newState = await invoke<DaemonState>("set_interface_order", { order: localOrder });
       setState(newState);
-      
       if (newState.current_active === targetPrimary.current) {
           setIsUpdatingOrder(false);
           targetPrimary.current = null;
       }
     } catch (e) {
-      console.error("Failed to update order", e);
       setIsUpdatingOrder(false);
     }
   };
@@ -175,37 +209,29 @@ function App() {
     return <Network size={20} />;
   };
 
-  const activeIface = state?.interfaces.find(i => i.name === state.current_active);
-  const displayInterfaces = localOrder.map(name => state?.interfaces.find(i => i.name === name)).filter(Boolean) as InterfaceInfo[];
+  const activeIface = state?.interfaces?.find(i => i.name === state?.current_active);
+  const displayInterfaces = (localOrder.map(name => state?.interfaces?.find(i => i.name === name)).filter(Boolean) as InterfaceInfo[]) || [];
+
+  if (!state && !isDaemonMissing) {
+    return (
+        <div className="container" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1, ease: "linear" }}>
+                <RefreshCw size={32} color="#3b82f6" />
+            </motion.div>
+        </div>
+    );
+  }
 
   if (isDaemonMissing && !state) {
     return (
       <div className="container" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <motion.div 
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="card daemon-setup"
-          style={{ textAlign: 'center', padding: '40px' }}
-        >
-          <div className="setup-icon" style={{ marginBottom: '24px' }}>
-            <AlertCircle size={64} color="#ef4444" style={{ margin: '0 auto' }} />
-          </div>
+        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="card daemon-setup" style={{ textAlign: 'center', padding: '40px' }}>
+          <AlertCircle size={64} color="#ef4444" style={{ margin: '0 auto 24px' }} />
           <h2 style={{ marginBottom: '16px' }}>Daemon Required</h2>
-          <p style={{ color: '#64748b', marginBottom: '32px' }}>
-            The Netswitch background service is not running. It is required to monitor network interfaces and manage routing.
-          </p>
-          
-          <button 
-            className={`setup-button ${isInstalling ? 'loading' : ''}`}
-            onClick={installDaemon}
-            disabled={isInstalling}
-          >
-            {isInstalling ? 'Installing Service...' : 'Setup & Start Daemon'}
+          <p style={{ color: '#64748b', marginBottom: '32px' }}>The Netswitch background service is not running.</p>
+          <button className={`setup-button ${isInstalling ? 'loading' : ''}`} onClick={installDaemon} disabled={isInstalling}>
+            {isInstalling ? 'Installing...' : 'Setup & Start Daemon'}
           </button>
-          
-          <p style={{ fontSize: '0.75rem', color: '#94a3b8', marginTop: '24px' }}>
-            This requires administrator privileges.
-          </p>
         </motion.div>
       </div>
     );
@@ -215,67 +241,35 @@ function App() {
     <div className="container">
       <header>
         <div style={{ display: 'flex', flexDirection: 'column' }}>
-          <motion.h1 
-            initial={{ opacity: 0, scale: 0.9 }}
-            animate={{ opacity: 1, scale: 1 }}
-          >
-            Netswitch
-          </motion.h1>
+          <motion.h1 initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }}>Netswitch</motion.h1>
           {state?.version && (
-            <motion.span 
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              className="version-tag"
-            >
-              v{state.version}
-            </motion.span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span className="version-tag">v{state.version}</span>
+                <AnimatePresence>
+                    {updateAvailable && (
+                        <motion.button initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -10 }} className={`update-pill ${isUpdatingApp ? 'updating' : ''}`} onClick={handleUpdate} disabled={isUpdatingApp}>
+                            {isUpdatingApp ? <><RefreshCw size={12} className="spin" /><span>{updateProgress}%</span></> : <><Download size={12} /><span>Update to v{updateAvailable.version}</span></>}
+                        </motion.button>
+                    )}
+                </AnimatePresence>
+            </div>
           )}
         </div>
-        <motion.div 
-          initial={{ opacity: 0, x: 20 }}
-          animate={{ opacity: 1, x: 0 }}
-          className="status-indicator status-online"
-        >
-          <div className="dot dot-pulse" />
-          Live Monitoring
-        </motion.div>
+        <div className="status-indicator status-online"><div className="dot dot-pulse" />Live Monitoring</div>
       </header>
 
       <div className="dashboard-grid">
         <AnimatePresence mode="wait">
           {activeIface ? (
-            <motion.div 
-              key={activeIface.name}
-              initial={{ opacity: 0, x: -20 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: 20 }}
-              className="active-summary"
-            >
-              <div className="icon">
-                <Activity size={24} />
-              </div>
-              <div className="details">
-                <h3>Active Interface</h3>
-                <p>{activeIface.friendly_name || activeIface.name}</p>
-              </div>
-              <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                 <span className="status-badge">Primary</span>
-                 <ChevronRight size={20} color="#3b82f6" />
-              </div>
+            <motion.div key={activeIface.name} initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 20 }} className="active-summary">
+              <div className="icon"><Activity size={24} /></div>
+              <div className="details"><h3>Active Interface</h3><p>{activeIface.friendly_name || activeIface.name}</p></div>
+              <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '8px' }}><span className="status-badge">Primary</span><ChevronRight size={20} color="#3b82f6" /></div>
             </motion.div>
           ) : (
-             <motion.div 
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              className="active-summary offline"
-             >
-                <div className="icon">
-                    <AlertCircle size={24} />
-                </div>
-                <div className="details">
-                    <h3>System Offline</h3>
-                    <p>Searching for connectivity...</p>
-                </div>
+             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="active-summary offline">
+                <div className="icon"><AlertCircle size={24} /></div>
+                <div className="details"><h3>System Offline</h3><p>Searching...</p></div>
              </motion.div>
           )}
         </AnimatePresence>
@@ -283,89 +277,26 @@ function App() {
         <div className="card">
           <div className="section-header">
             <h2>Priority List</h2>
-            <AnimatePresence>
-              {isUpdatingOrder ? (
-                <motion.div 
-                  initial={{ opacity: 0, scale: 0.8 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  exit={{ opacity: 0, scale: 0.8 }}
-                  className="saving-indicator"
-                >
-                  <motion.div 
-                    animate={{ rotate: 360 }}
-                    transition={{ repeat: Infinity, duration: 1, ease: "linear" }}
-                  >
-                    <Network size={14} />
-                  </motion.div>
-                  Syncing Priority...
-                </motion.div>
-              ) : (
-                <div className="hint-pill">Drag to Prioritize</div>
-              )}
-            </AnimatePresence>
+            {isUpdatingOrder ? <div className="saving-indicator">Syncing...</div> : <div className="hint-pill">Drag to Prioritize</div>}
           </div>
-
-          <Reorder.Group 
-            axis="y" 
-            values={localOrder} 
-            onReorder={handleReorder}
-            className="interface-stack"
-          >
+          <Reorder.Group axis="y" values={localOrder} onReorder={handleReorder} className="interface-stack">
             {displayInterfaces.map((iface) => (
-              <Reorder.Item 
-                key={iface.name} 
-                value={iface.name}
-                onDragStart={() => { isDragging.current = true; }}
-                onDragEnd={syncOrder}
-                whileDrag={{ scale: 1.02, boxShadow: "0 20px 25px -5px rgb(0 0 0 / 0.1)" }}
-                className={`interface-item ${iface.is_primary ? 'is-active' : ''} ${isUpdatingOrder ? 'lazy-loading' : ''}`}
-              >
-                {isUpdatingOrder && (
-                  <div className="updating-overlay">
-                    Saving...
-                  </div>
-                )}
+              <Reorder.Item key={iface.name} value={iface.name} onDragStart={() => { isDragging.current = true; }} onDragEnd={syncOrder} whileDrag={{ scale: 1.02 }} className={`interface-item ${iface.is_primary ? 'is-active' : ''}`}>
                 <div className="item-left">
-                  <div className="drag-handle">
-                    <GripVertical size={20} />
-                  </div>
-                  <div className="iface-icon">
-                    {getIcon(iface.friendly_name || iface.name)}
-                  </div>
-                  <div className="iface-info">
-                    <h4>{iface.friendly_name || iface.name}</h4>
-                    <p>{iface.name}</p>
-                  </div>
+                  <div className="drag-handle"><GripVertical size={20} /></div>
+                  <div className="iface-icon">{getIcon(iface.friendly_name || iface.name)}</div>
+                  <div className="iface-info"><h4>{iface.friendly_name || iface.name}</h4><p>{iface.name}</p></div>
                 </div>
-
                 <div className="item-right">
-                  <div className={`status-pill ${iface.has_internet ? 'online' : 'offline'}`}>
-                    <div className="dot" />
-                    {iface.has_internet ? 'Connected' : 'Offline'}
-                  </div>
-                  <div className="priority-number">
-                    {localOrder.indexOf(iface.name) + 1}
-                  </div>
+                  <div className={`status-pill ${iface.has_internet ? 'online' : 'offline'}`}><div className="dot" />{iface.has_internet ? 'Connected' : 'Offline'}</div>
+                  <div className="priority-number">{localOrder.indexOf(iface.name) + 1}</div>
                 </div>
               </Reorder.Item>
             ))}
           </Reorder.Group>
         </div>
       </div>
-
-      <AnimatePresence>
-        {error && (
-          <motion.div 
-            initial={{ opacity: 0, y: 50 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 50 }}
-            className="error-toast"
-          >
-            <AlertCircle size={20} />
-            <span>{error}</span>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {error && <div className="error-toast"><AlertCircle size={20} /><span>{error}</span></div>}
     </div>
   );
 }
