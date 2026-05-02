@@ -36,23 +36,34 @@ if (-not (Test-Path $InstallDir)) {
 }
 
 # 2. Stop existing service if running
-if (Get-Service -Name "NetswitchDaemon" -ErrorAction SilentlyContinue) {
-    Stop-Service -Name "NetswitchDaemon" -Force
+$ExistingService = Get-Service -Name "NetswitchDaemon" -ErrorAction SilentlyContinue
+if ($ExistingService) {
+    if ($ExistingService.Status -ne 'Stopped') {
+        Write-Host "Stopping existing service..."
+        Stop-Service -Name "NetswitchDaemon" -Force
+    }
 }
 
 # 3. Copy binary
+# Wait a moment for file handles to be released
+Start-Sleep -Seconds 1
 Copy-Item -Path $BinarySource -Destination $BinaryDest -Force
 
 # 4. Create/Update Service
-$Service = Get-Service -Name "NetswitchDaemon" -ErrorAction SilentlyContinue
-if (-not $Service) {
+if (-not $ExistingService) {
+    Write-Host "Creating new service..."
     New-Service -Name "NetswitchDaemon" `
                 -BinaryPathName "`"$BinaryDest`"" `
                 -DisplayName "Netswitch Network Monitor" `
                 -Description "Monitors network interfaces and handles failover." `
                 -StartupType Automatic
+} else {
+    Write-Host "Updating existing service configuration..."
+    # Update binary path just in case it changed
+    sc.exe config "NetswitchDaemon" binPath= "`"$BinaryDest`""
 }
 
+Write-Host "Starting service..."
 Start-Service -Name "NetswitchDaemon"
 
 Write-Host "🚀 Setup Complete! Netswitch Daemon is running as a service." -ForegroundColor Green
