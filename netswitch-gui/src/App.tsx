@@ -10,7 +10,8 @@ import {
   GripVertical,
   Network,
   Download,
-  RefreshCw
+  RefreshCw,
+  Shield
 } from "lucide-react";
 import "./App.css";
 
@@ -41,6 +42,8 @@ const formatInterfaceName = (iface: InterfaceInfo | undefined) => {
     base = "Thunderbolt";
   } else if (lower.includes("bluetooth")) {
     base = "Bluetooth";
+  } else if (lower.includes("vpn") || lower.includes("tunnel") || lower.includes("utun") || lower.includes("wireguard") || lower.includes("tailscale")) {
+    base = "VPN";
   } else if (base.length > 20) {
     base = base.substring(0, 17) + "...";
   }
@@ -227,6 +230,9 @@ function App() {
     const n = name.toLowerCase();
     if (n.includes("wi-fi") || n.includes("wlan") || n.includes("wifi")) {
       return <Wifi size={20} />;
+    }
+    if (n.includes("vpn") || n.includes("tunnel") || n.includes("utun") || n.includes("wireguard") || n.includes("tailscale")) {
+      return <Shield size={20} />;
     }
     return <Network size={20} />;
   };

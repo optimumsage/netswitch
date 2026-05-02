@@ -15,6 +15,10 @@ pub fn get_interfaces() -> Vec<Interface> {
         for iface in &mut interfaces {
             if let Some(friendly) = friendly_names.get(&iface.name) {
                 iface.friendly_name = Some(friendly.clone());
+            } else if iface.name.starts_with("utun") {
+                iface.friendly_name = Some("VPN (Tunnel)".to_string());
+            } else if iface.name.starts_with("wg") {
+                iface.friendly_name = Some("WireGuard".to_string());
             }
         }
     }
