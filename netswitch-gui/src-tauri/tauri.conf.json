@@ -15,8 +15,10 @@
         "title": "Netswitch",
         "width": 500,
         "height": 650,
-        "resizable": false,
-        "maximizable": false
+        "minWidth": 400,
+        "minHeight": 500,
+        "resizable": true,
+        "maximizable": true
       }
     ],
     "security": {

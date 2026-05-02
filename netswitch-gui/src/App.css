@@ -27,14 +27,104 @@ body {
 }
 
 .container {
-  max-width: 500px;
+  max-width: 1000px;
+  min-width: 440px;
+  min-height: 500px;
   margin: 0 auto;
   padding: 24px 20px;
   width: 100%;
-  height: 100%;
+  height: 100vh;
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
+  transition: max-width 0.3s ease;
+}
+
+@media (min-width: 900px) {
+  .dashboard-grid {
+    flex-direction: row;
+    align-items: flex-start;
+    gap: 24px;
+  }
+
+  .active-summary {
+    flex: 0 0 300px;
+    flex-direction: column;
+    height: auto;
+    padding: 32px 24px;
+    text-align: center;
+    justify-content: center;
+  }
+
+  .active-summary .icon {
+    width: 64px;
+    height: 64px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 16px;
+  }
+
+  .active-summary .icon svg {
+    width: 32px;
+    height: 32px;
+  }
+
+  .active-summary .details {
+    margin-bottom: 20px;
+  }
+
+  .active-summary .details p {
+    font-size: 1.4rem;
+    line-height: 1.2;
+  }
+
+  /* Adjust the badge container that has inline marginLeft: auto */
+  .active-summary > div:last-child {
+    margin-left: 0 !important;
+    width: 100%;
+    justify-content: center;
+    margin-top: 8px;
+  }
+
+  .card {
+    flex: 1;
+    height: 100%;
+  }
+}
+
+@media (max-height: 700px) {
+  .container {
+    padding: 16px 16px;
+  }
+  header {
+    margin-bottom: 16px;
+  }
+  .dashboard-grid {
+    gap: 16px;
+  }
+  .card {
+    padding: 20px;
+  }
+}
+
+@media (max-height: 550px) {
+  .container {
+    padding: 12px 12px;
+  }
+  header {
+    margin-bottom: 8px;
+  }
+  h1 {
+    font-size: 1.5rem;
+  }
+  .active-summary {
+    padding: 12px;
+    gap: 12px;
+  }
+  .active-summary .details p {
+    font-size: 1.1rem;
+  }
 }
 
 header {
