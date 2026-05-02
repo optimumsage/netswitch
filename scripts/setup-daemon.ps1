@@ -28,7 +28,7 @@ if (-not (Test-Path $BinarySource)) {
     exit 1
 }
 
-Write-Host "🔧 Installing Netswitch Daemon from $BinarySource..." -ForegroundColor Cyan
+Write-Host "Installing Netswitch Daemon from $BinarySource..." -ForegroundColor Cyan
 
 # 1. Create directory
 if (-not (Test-Path $InstallDir)) {
@@ -66,4 +66,4 @@ if (-not $ExistingService) {
 Write-Host "Starting service..."
 Start-Service -Name "NetswitchDaemon"
 
-Write-Host "🚀 Setup Complete! Netswitch Daemon is running as a service." -ForegroundColor Green
+Write-Host "Setup Complete! Netswitch Daemon is running as a service." -ForegroundColor Green
