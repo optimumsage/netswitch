@@ -28,6 +28,27 @@ interface DaemonState {
   custom_order: string[];
 }
 
+const formatInterfaceName = (iface: InterfaceInfo | undefined) => {
+  if (!iface) return "";
+  let base = iface.friendly_name || iface.name;
+  const lower = base.toLowerCase();
+  
+  if (lower.includes("wi-fi") || lower.includes("wlan") || lower.includes("wifi")) {
+    base = "WiFi";
+  } else if (lower.includes("ethernet") || lower.includes("lan") || lower.includes("local area connection")) {
+    base = "LAN";
+  } else if (lower.includes("thunderbolt")) {
+    base = "Thunderbolt";
+  } else if (lower.includes("bluetooth")) {
+    base = "Bluetooth";
+  } else if (base.length > 20) {
+    base = base.substring(0, 17) + "...";
+  }
+  
+  if (base === iface.name) return base;
+  return `${base} (${iface.name})`;
+};
+
 function App() {
   const [state, setState] = useState<DaemonState | null>(null);
   const [localOrder, setLocalOrder] = useState<string[]>([]);
@@ -171,7 +192,7 @@ function App() {
       const active = state.interfaces.find(i => i.name === state.current_active);
       invoke("update_tray_status", { 
         activeInterface: state.current_active, 
-        friendlyName: active?.friendly_name || active?.name || null 
+        friendlyName: formatInterfaceName(active) || null 
       }).catch(() => {});
     }
   }, [state?.current_active, state?.interfaces]);
@@ -203,7 +224,8 @@ function App() {
   };
 
   const getIcon = (name: string) => {
-    if (name.toLowerCase().includes("wi-fi") || name.toLowerCase().includes("wlan") || name.startsWith("en1")) {
+    const n = name.toLowerCase();
+    if (n.includes("wi-fi") || n.includes("wlan") || n.includes("wifi")) {
       return <Wifi size={20} />;
     }
     return <Network size={20} />;
@@ -261,10 +283,17 @@ function App() {
       <div className="dashboard-grid">
         <AnimatePresence mode="wait">
           {activeIface ? (
-            <motion.div key={activeIface.name} initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 20 }} className="active-summary">
-              <div className="icon"><Activity size={24} /></div>
-              <div className="details"><h3>Active Interface</h3><p>{activeIface.friendly_name || activeIface.name}</p></div>
-              <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '8px' }}><span className="status-badge">Primary</span><ChevronRight size={20} color="#3b82f6" /></div>
+            <motion.div key={activeIface.name} initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 20 }} className={`active-summary ${isUpdatingOrder ? 'lazy-loading' : ''}`}>
+              <div className="icon">{getIcon(activeIface.friendly_name || activeIface.name)}</div>
+              <div className="details"><h3>Active Interface</h3><p>{formatInterfaceName(activeIface)}</p></div>
+              <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                {isUpdatingOrder ? (
+                   <span className="status-badge" style={{ background: '#94a3b8' }}>Switching...</span>
+                ) : (
+                   <span className="status-badge">Primary</span>
+                )}
+                <ChevronRight size={20} color="#3b82f6" />
+              </div>
             </motion.div>
           ) : (
              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="active-summary offline">
@@ -274,18 +303,41 @@ function App() {
           )}
         </AnimatePresence>
 
-        <div className="card">
+        <div className="card" style={{ position: 'relative' }}>
+          <AnimatePresence>
+            {isUpdatingOrder && (
+              <motion.div 
+                initial={{ opacity: 0 }} 
+                animate={{ opacity: 1 }} 
+                exit={{ opacity: 0 }} 
+                className="updating-overlay"
+              >
+                <div className="loader-content">
+                  <RefreshCw size={24} className="spin" />
+                  <span>Switching Network...</span>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
           <div className="section-header">
             <h2>Priority List</h2>
             {isUpdatingOrder ? <div className="saving-indicator">Syncing...</div> : <div className="hint-pill">Drag to Prioritize</div>}
           </div>
           <Reorder.Group axis="y" values={localOrder} onReorder={handleReorder} className="interface-stack">
             {displayInterfaces.map((iface) => (
-              <Reorder.Item key={iface.name} value={iface.name} onDragStart={() => { isDragging.current = true; }} onDragEnd={syncOrder} whileDrag={{ scale: 1.02 }} className={`interface-item ${iface.is_primary ? 'is-active' : ''}`}>
+              <Reorder.Item 
+                key={iface.name} 
+                value={iface.name} 
+                onDragStart={() => { isDragging.current = true; }} 
+                onDragEnd={syncOrder} 
+                whileDrag={{ scale: 1.02 }} 
+                className={`interface-item ${iface.is_primary ? 'is-active' : ''}`}
+              >
                 <div className="item-left">
                   <div className="drag-handle"><GripVertical size={20} /></div>
                   <div className="iface-icon">{getIcon(iface.friendly_name || iface.name)}</div>
-                  <div className="iface-info"><h4>{iface.friendly_name || iface.name}</h4><p>{iface.name}</p></div>
+                  <div className="iface-info"><h4>{formatInterfaceName(iface)}</h4></div>
                 </div>
                 <div className="item-right">
                   <div className={`status-pill ${iface.has_internet ? 'online' : 'offline'}`}><div className="dot" />{iface.has_internet ? 'Connected' : 'Offline'}</div>
