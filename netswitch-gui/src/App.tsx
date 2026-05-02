@@ -70,12 +70,17 @@ function App() {
 
   const checkForUpdates = async () => {
     try {
+      console.log("Checking for updates...");
       const update = await check();
       if (update) {
+        console.log(`Update available: ${update.version}`);
         setUpdateAvailable(update);
+      } else {
+        console.log("No updates found.");
       }
     } catch (e) {
-      // Failed to check for updates
+      console.error("Failed to check for updates:", e);
+      // Optional: setError(`Update check failed: ${e}`);
     }
   };
 
