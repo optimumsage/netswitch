@@ -2,10 +2,14 @@ use default_net::Interface;
 use socket2::{Domain, Protocol, Socket, Type};
 use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;
+
+#[cfg(target_os = "macos")]
 use std::collections::HashMap;
+#[cfg(target_os = "macos")]
 use std::process::Command;
 
 pub fn get_interfaces() -> Vec<Interface> {
+    #[allow(unused_mut)]
     let mut interfaces = default_net::get_interfaces();
     
     // Supplement with macOS friendly names

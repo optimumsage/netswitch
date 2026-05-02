@@ -9,6 +9,9 @@ use tokio::sync::Mutex;
 
 use tokio_util::sync::CancellationToken;
 
+#[cfg(windows)]
+windows_service::define_windows_service!(ffi_service_main, service_main);
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let version = env!("CARGO_PKG_VERSION");
@@ -18,9 +21,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         // If we're running as a service, the dispatcher will take over.
         // Otherwise, it returns an error, and we run as a normal CLI app.
-        if let Err(e) = windows_service::service_dispatcher::start("NetswitchDaemon", service_main) {
+        if let Err(e) = windows_service::service_dispatcher::start("NetswitchDaemon", ffi_service_main) {
             match e {
-                windows_service::Error::Winapi(err) if err.code() == 1063 => {
+                windows_service::Error::Winapi(err) if err.raw_os_error() == Some(1063) => {
                     // ERROR_FAILED_SERVICE_CONTROLLER_CONNECT: Not running as a service
                     println!("Netswitch Daemon v{} started (CLI mode)", version);
                     run_daemon(token).await;
