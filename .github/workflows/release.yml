@@ -93,66 +93,66 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Get the tag from the version in package.json
           VERSION=$(node -p "require('./package.json').version")
           TAG="v$VERSION"
-          
-          echo "Processing release for tag: $TAG"
-          
-          # Fetch release info
+          echo "Target Version: $VERSION"
+          echo "Target Tag: $TAG"
+
+          # 1. Try to get release by tag
           RELEASE_DATA=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
             "https://api.github.com/repos/${{ github.repository }}/releases/tags/$TAG")
           
-          RELEASE_ID=$(echo "$RELEASE_DATA" | jq -r '.id')
-          
-          if [ "$RELEASE_ID" == "null" ]; then
-            echo "Release not found for tag $TAG. It might still be a draft."
-            # Try to find the latest draft with this name
+          # 2. If tag not found (common for drafts), search through all releases
+          if echo "$RELEASE_DATA" | jq -e '.message == "Not Found"' > /dev/null; then
+            echo "Release not found by tag. Searching all releases for draft..."
             RELEASE_DATA=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
               "https://api.github.com/repos/${{ github.repository }}/releases" | \
-              jq -r ".[] | select(.name == \"Netswitch $TAG\")" | head -n 1)
-            RELEASE_ID=$(echo "$RELEASE_DATA" | jq -r '.id')
+              jq -c "map(select(.tag_name == \"$TAG\" or .name == \"Netswitch $TAG\")) | .[0]")
           fi
-          
-          if [ "$RELEASE_ID" == "null" ]; then
-            echo "Could not find release. Exiting."
+
+          if [ -z "$RELEASE_DATA" ] || [ "$RELEASE_DATA" == "null" ]; then
+            echo "Error: Could not find any release matching $TAG"
             exit 1
           fi
 
-          # Extract assets
-          ASSETS=$(echo "$RELEASE_DATA" | jq -c '.assets[]')
-          
-          # Initialize platforms object
+          RELEASE_ID=$(echo "$RELEASE_DATA" | jq -r '.id')
+          echo "Found Release ID: $RELEASE_ID"
+
+          # 3. Extract and process assets
           PLATFORMS="{}"
+          ASSETS_LIST=$(echo "$RELEASE_DATA" | jq -c '.assets[]')
           
-          for asset in $ASSETS; do
+          while read -r asset; do
+            [ -z "$asset" ] && continue
             NAME=$(echo "$asset" | jq -r '.name')
             URL=$(echo "$asset" | jq -r '.browser_download_url')
             
-            # We only care about update bundles (tar.gz, msi.zip, deb) and NOT .sig files themselves
             if [[ "$NAME" == *.sig ]]; then continue; fi
             
-            # Find the signature for this asset
-            SIG_ASSET=$(echo "$RELEASE_DATA" | jq -r ".assets[] | select(.name == \"$NAME.sig\")")
-            if [ -z "$SIG_ASSET" ]; then continue; fi
+            # Find signature content
+            SIG_NAME="$NAME.sig"
+            SIG_ASSET_DATA=$(echo "$RELEASE_DATA" | jq -c ".assets[] | select(.name == \"$SIG_NAME\")")
             
-            SIG_URL=$(echo "$SIG_ASSET" | jq -r '.browser_download_url')
-            SIGNATURE=$(curl -sL -H "Authorization: token $GITHUB_TOKEN" "$SIG_URL")
-            
-            # Map asset names to Tauri platform keys
-            PLATFORM_KEY=""
-            if [[ "$NAME" == *"aarch64.app.tar.gz" ]]; then PLATFORM_KEY="macos-aarch64"
-            elif [[ "$NAME" == *"x64.app.tar.gz" ]]; then PLATFORM_KEY="macos-x86_64"
-            elif [[ "$NAME" == *"x64_en-US.msi.zip" ]]; then PLATFORM_KEY="windows-x86_64"
-            elif [[ "$NAME" == *"amd64.deb" ]]; then PLATFORM_KEY="linux-x86_64"
+            if [ -n "$SIG_ASSET_DATA" ]; then
+              SIG_URL=$(echo "$SIG_ASSET_DATA" | jq -r '.browser_download_url')
+              echo "Fetching signature for $NAME..."
+              SIGNATURE=$(curl -sL -H "Authorization: token $GITHUB_TOKEN" "$SIG_URL")
+              
+              PLATFORM_KEY=""
+              if [[ "$NAME" == *"aarch64.app.tar.gz" ]]; then PLATFORM_KEY="macos-aarch64"
+              elif [[ "$NAME" == *"x64.app.tar.gz" ]]; then PLATFORM_KEY="macos-x86_64"
+              elif [[ "$NAME" == *"x64_en-US.msi.zip" ]]; then PLATFORM_KEY="windows-x86_64"
+              elif [[ "$NAME" == *"amd64.deb" ]]; then PLATFORM_KEY="linux-x86_64"
+              fi
+              
+              if [ -n "$PLATFORM_KEY" ]; then
+                echo "Adding platform: $PLATFORM_KEY"
+                PLATFORMS=$(echo "$PLATFORMS" | jq -c ". + {\"$PLATFORM_KEY\": {\"signature\": \"$SIGNATURE\", \"url\": \"$URL\"}}")
+              fi
             fi
-            
-            if [ -n "$PLATFORM_KEY" ]; then
-              PLATFORMS=$(echo "$PLATFORMS" | jq -c ". + {\"$PLATFORM_KEY\": {\"signature\": \"$SIGNATURE\", \"url\": \"$URL\"}}")
-            fi
-          done
+          done <<< "$ASSETS_LIST"
           
-          # Construct final JSON
+          # 4. Final JSON construction
           DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
           JSON=$(jq -n \
             --arg ver "$VERSION" \
@@ -164,15 +164,15 @@ jobs:
           echo "Generated latest.json:"
           cat latest.json
           
-          # Upload to release (overwrite if exists)
-          ASSET_ID=$(echo "$RELEASE_DATA" | jq -r '.assets[] | select(.name == "latest.json") | .id')
-          if [ -n "$ASSET_ID" ]; then
-            echo "Deleting existing latest.json (ID: $ASSET_ID)"
+          # 5. Upload/Replace latest.json
+          EXISTING_ASSET_ID=$(echo "$RELEASE_DATA" | jq -r '.assets[] | select(.name == "latest.json") | .id' || echo "")
+          if [ -n "$EXISTING_ASSET_ID" ] && [ "$EXISTING_ASSET_ID" != "null" ]; then
+            echo "Deleting old latest.json (ID: $EXISTING_ASSET_ID)..."
             curl -s -X DELETE -H "Authorization: token $GITHUB_TOKEN" \
-              "https://api.github.com/repos/${{ github.repository }}/releases/assets/$ASSET_ID"
+              "https://api.github.com/repos/${{ github.repository }}/releases/assets/$EXISTING_ASSET_ID"
           fi
           
-          echo "Uploading latest.json to release $RELEASE_ID"
+          echo "Uploading new latest.json..."
           curl -s -H "Authorization: token $GITHUB_TOKEN" \
             -H "Content-Type: application/json" \
             --data-binary @latest.json \
