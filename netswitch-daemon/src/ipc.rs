@@ -32,7 +32,7 @@ pub struct UpdateOrderRequest {
 
 pub type SharedState = Arc<Mutex<DaemonState>>;
 
-pub async fn start_server(state: SharedState) {
+pub async fn start_server(state: SharedState, token: tokio_util::sync::CancellationToken) {
     let app = Router::new()
         .route("/status", get(get_status))
         .route("/order", post(update_order))
@@ -42,7 +42,13 @@ pub async fn start_server(state: SharedState) {
     println!("IPC Server listening on {}", addr);
     
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
-    axum::serve(listener, app).await.unwrap();
+    axum::serve(listener, app)
+        .with_graceful_shutdown(async move {
+            token.cancelled().await;
+            println!("IPC server received shutdown signal");
+        })
+        .await
+        .unwrap();
 }
 
 async fn get_status(State(state): State<SharedState>) -> Json<DaemonState> {
