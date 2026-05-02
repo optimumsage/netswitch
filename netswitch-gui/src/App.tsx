@@ -4,7 +4,6 @@ import { check } from "@tauri-apps/plugin-updater";
 import { motion, AnimatePresence, Reorder } from "framer-motion";
 import { 
   Wifi, 
-  Activity, 
   AlertCircle, 
   ChevronRight, 
   GripVertical,
