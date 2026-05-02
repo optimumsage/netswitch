@@ -26,6 +26,19 @@ pub fn get_interfaces() -> Vec<Interface> {
             }
         }
     }
+
+    // Clean up Windows names (strip GUIDs)
+    #[cfg(target_os = "windows")]
+    {
+        for iface in &mut interfaces {
+            let name_to_clean = iface.friendly_name.as_ref().unwrap_or(&iface.name);
+            if let Some(pos) = name_to_clean.find(" (") {
+                if name_to_clean.contains('{') && name_to_clean.contains('}') {
+                    iface.friendly_name = Some(name_to_clean[..pos].to_string());
+                }
+            }
+        }
+    }
     
     interfaces
 }
