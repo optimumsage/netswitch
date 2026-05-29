@@ -1,5 +1,18 @@
+use std::sync::LazyLock;
+use std::time::Duration;
+
 use serde::{Deserialize, Serialize};
 use tauri::{Manager, menu::{Menu, MenuItem, PredefinedMenuItem}, tray::{TrayIconBuilder, TrayIconEvent, MouseButton, MouseButtonState}};
+
+/// A single reqwest client reused for every IPC call. Recreating a client on
+/// each poll (every ~1.5s) churned connection pools; this also enforces a short
+/// timeout so a hung daemon can never wedge a Tauri command indefinitely.
+static HTTP: LazyLock<reqwest::Client> = LazyLock::new(|| {
+    reqwest::Client::builder()
+        .timeout(Duration::from_secs(4))
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new())
+});
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct DaemonState {
@@ -19,11 +32,18 @@ pub struct InterfaceInfo {
 
 struct TrayStatusItem(MenuItem<tauri::Wry>);
 
+fn get_ipc_url() -> &'static str {
+    if cfg!(debug_assertions) {
+        "http://127.0.0.1:51338"
+    } else {
+        "http://127.0.0.1:51337"
+    }
+}
+
 #[tauri::command]
 async fn get_daemon_status() -> Result<DaemonState, String> {
-    let client = reqwest::Client::new();
-    let res = client
-        .get("http://127.0.0.1:51337/status")
+    let res = HTTP
+        .get(format!("{}/status", get_ipc_url()))
         .send()
         .await
         .map_err(|e| e.to_string())?;
@@ -34,18 +54,17 @@ async fn get_daemon_status() -> Result<DaemonState, String> {
 
 #[tauri::command]
 async fn set_interface_order(order: Vec<String>) -> Result<DaemonState, String> {
-    let client = reqwest::Client::new();
     // 1. Send the new order
-    let _ = client
-        .post("http://127.0.0.1:51337/order")
+    let _ = HTTP
+        .post(format!("{}/order", get_ipc_url()))
         .json(&serde_json::json!({ "order": order }))
         .send()
         .await
         .map_err(|e| e.to_string())?;
 
     // 2. Immediately fetch the new state to confirm
-    let res = client
-        .get("http://127.0.0.1:51337/status")
+    let res = HTTP
+        .get(format!("{}/status", get_ipc_url()))
         .send()
         .await
         .map_err(|e| e.to_string())?;
@@ -63,8 +82,8 @@ fn update_tray_status(
 ) {
     let name = friendly_name.or(active_interface);
     let title = match name {
-        Some(ref n) => format!("Netswitch: {}", n),
-        None => "Netswitch: Offline".to_string(),
+        Some(ref n) if !n.is_empty() => format!("Netswitch — {}", n),
+        _ => "Netswitch — Offline".to_string(),
     };
     
     if let Some(tray) = app.tray_by_id("main") {
@@ -181,10 +200,11 @@ pub fn run() {
                             app.exit(0);
                         }
                         "show" => {
-                            let window = app.get_webview_window("main").unwrap();
-                            let _ = window.show();
-                            let _ = window.set_focus();
-                            let _ = window.unminimize();
+                            if let Some(window) = app.get_webview_window("main") {
+                                let _ = window.show();
+                                let _ = window.set_focus();
+                                let _ = window.unminimize();
+                            }
                         }
                         _ => {}
                     }
@@ -210,12 +230,13 @@ pub fn run() {
         })
         .on_window_event(|window, event| match event {
             tauri::WindowEvent::CloseRequested { api, .. } => {
-                window.hide().unwrap();
+                // Closing hides to the tray rather than quitting.
+                let _ = window.hide();
                 api.prevent_close();
             }
             tauri::WindowEvent::Resized(..) => {
                 if window.is_minimized().unwrap_or(false) {
-                    window.hide().unwrap();
+                    let _ = window.hide();
                 }
             }
             _ => {}
